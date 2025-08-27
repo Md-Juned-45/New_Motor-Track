@@ -16,26 +16,14 @@ import {
   Edit,
   Play
 } from 'lucide-react';
-
-interface Job {
-  id: string;
-  jobNumber: string;
-  companyName: string;
-  motorId: string;
-  description: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'delivered' | 'under_warranty';
-  priority: 'low' | 'normal' | 'high' | 'urgent';
-  estimatedCost: number;
-  actualCost?: number;
-  laborHours: number;
-  createdAt: string;
-  startDate?: string;
-  dueDate: string;
-  completedDate?: string;
-  deliveryDate?: string;
-  technician: string;
-  lastUpdate: string;
-}
+import { useAsync } from '../hooks/useAsync';
+import { jobService } from '../services/jobService';
+import { companyService } from '../services/companyService';
+import { motorService } from '../services/motorService';
+import { userService } from '../services/userService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
+import { Job, Company, Motor, User } from '../utils/supabase';
 
 const Jobs = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -43,93 +31,30 @@ const Jobs = () => {
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
+  const [isCreating, setIsCreating] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState('');
 
-  const jobs: Job[] = [
-    {
-      id: '1',
-      jobNumber: 'JOB-2024-089',
-      companyName: 'Manufacturing Solutions Ltd',
-      motorId: 'MT-2024-001',
-      description: 'Complete stator rewind with new insulation system and bearing replacement',
-      status: 'completed',
-      priority: 'high',
-      estimatedCost: 850,
-      actualCost: 825,
-      laborHours: 12,
-      createdAt: '2024-01-15',
-      startDate: '2024-01-16',
-      dueDate: '2024-01-20',
-      completedDate: '2024-01-19',
-      technician: 'John Smith',
-      lastUpdate: '2 hours ago'
-    },
-    {
-      id: '2',
-      jobNumber: 'JOB-2024-088',
-      companyName: 'Industrial Power Corp',
-      motorId: 'DC-2024-002',
-      description: 'Rotor bearing replacement and brush maintenance',
-      status: 'in_progress',
-      priority: 'normal',
-      estimatedCost: 450,
-      laborHours: 6,
-      createdAt: '2024-01-18',
-      startDate: '2024-01-19',
-      dueDate: '2024-01-22',
-      technician: 'Mike Johnson',
-      lastUpdate: '4 hours ago'
-    },
-    {
-      id: '3',
-      jobNumber: 'JOB-2024-087',
-      companyName: 'Metro Manufacturing',
-      motorId: 'AC-2024-015',
-      description: 'AC motor diagnostic and performance testing',
-      status: 'pending',
-      priority: 'low',
-      estimatedCost: 200,
-      laborHours: 3,
-      createdAt: '2024-01-20',
-      dueDate: '2024-01-25',
-      technician: 'Sarah Wilson',
-      lastUpdate: '6 hours ago'
-    },
-    {
-      id: '4',
-      jobNumber: 'JOB-2024-086',
-      companyName: 'Precision Motors Inc',
-      motorId: 'SV-2024-003',
-      description: 'Complete motor rebuild with upgraded components',
-      status: 'delivered',
-      priority: 'urgent',
-      estimatedCost: 1200,
-      actualCost: 1150,
-      laborHours: 18,
-      createdAt: '2024-01-10',
-      startDate: '2024-01-12',
-      dueDate: '2024-01-18',
-      completedDate: '2024-01-17',
-      deliveryDate: '2024-01-18',
-      technician: 'John Smith',
-      lastUpdate: '1 day ago'
-    },
-    {
-      id: '5',
-      jobNumber: 'JOB-2024-085',
-      companyName: 'Power Systems Ltd',
-      motorId: 'GN-2024-004',
-      description: 'Generator maintenance and calibration',
-      status: 'in_progress',
-      priority: 'high',
-      estimatedCost: 980,
-      laborHours: 14,
-      createdAt: '2024-01-14',
-      startDate: '2024-01-15',
-      dueDate: '2024-01-21',
-      technician: 'Mike Johnson',
-      lastUpdate: '1 day ago'
-    }
-  ];
+  // Fetch data
+  const { data: jobs, loading: jobsLoading, error: jobsError, refetch: refetchJobs } = useAsync(
+    () => jobService.getAll(),
+    []
+  );
+
+  const { data: companies, loading: companiesLoading, error: companiesError } = useAsync(
+    () => companyService.getAll(),
+    []
+  );
+
+  const { data: technicians, loading: techniciansLoading, error: techniciansError } = useAsync(
+    () => userService.getTechnicians(),
+    []
+  );
+
+  // Fetch motors for selected company
+  const { data: companyMotors, loading: motorsLoading } = useAsync(
+    () => selectedCompany ? motorService.getByCompany(selectedCompany) : Promise.resolve([]),
+    [selectedCompany]
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -188,7 +113,9 @@ const Jobs = () => {
     return diffDays;
   };
 
-  const getProgressPercentage = (status: string) => {
+  const getProgressPercentage = (status: string, progressPercentage?: number) => {
+    if (progressPercentage !== undefined) return progressPercentage;
+    
     switch (status) {
       case 'pending':
         return 10;
@@ -205,16 +132,70 @@ const Jobs = () => {
     }
   };
 
-  const filteredJobs = jobs.filter(job => {
-    const matchesSearch = job.jobNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+  const filteredJobs = (jobs || []).filter(job => {
+    const matchesSearch = job.job_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          job.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         job.companyName.toLowerCase().includes(searchTerm.toLowerCase());
+                         job.company_name?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || job.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || job.priority === priorityFilter;
     
     return matchesSearch && matchesStatus && matchesPriority;
   });
+
+  const handleCreateJob = async (formData: FormData) => {
+    setIsCreating(true);
+    try {
+      const jobData = {
+        company_id: formData.get('company_id') as string,
+        motor_id: formData.get('motor_id') as string,
+        description: formData.get('description') as string,
+        priority: formData.get('priority') as Job['priority'] || 'normal',
+        start_date: formData.get('start_date') as string || undefined,
+        due_date: formData.get('due_date') as string,
+        labor_hours: parseFloat(formData.get('labor_hours') as string) || undefined,
+        technician_id: formData.get('technician_id') as string || undefined,
+        labor_rate: parseFloat(formData.get('labor_rate') as string) || undefined,
+        parts_cost: parseFloat(formData.get('parts_cost') as string) || undefined,
+        estimated_cost: 0, // Will be calculated
+        status: 'pending' as const
+      };
+      
+      // Calculate estimated cost
+      const laborCost = (jobData.labor_hours || 0) * (jobData.labor_rate || 0);
+      jobData.estimated_cost = laborCost + (jobData.parts_cost || 0);
+      
+      await jobService.create(jobData);
+      setShowCreateModal(false);
+      setActiveStep(0);
+      setSelectedCompany('');
+      refetchJobs();
+    } catch (error) {
+      console.error('Error creating job:', error);
+      alert('Failed to create job. Please try again.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  if (jobsLoading || companiesLoading || techniciansLoading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (jobsError || companiesError || techniciansError) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage 
+          message={jobsError || companiesError || techniciansError || 'An error occurred'} 
+          onRetry={refetchJobs} 
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -280,7 +261,7 @@ const Jobs = () => {
       {/* Jobs List */}
       <div className="space-y-4">
         {filteredJobs.map((job) => {
-          const daysUntilDue = getDaysUntilDue(job.dueDate);
+          const daysUntilDue = job.due_date ? getDaysUntilDue(job.due_date) : 0;
           const isOverdue = daysUntilDue < 0;
           const isDueSoon = daysUntilDue <= 2 && daysUntilDue >= 0;
           
@@ -295,7 +276,7 @@ const Jobs = () => {
                     </div>
                     <div>
                       <div className="flex items-center space-x-3 mb-2">
-                        <h3 className="font-bold text-lg text-gray-900">{job.jobNumber}</h3>
+                        <h3 className="font-bold text-lg text-gray-900">{job.job_number}</h3>
                         <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(job.status)}`}>
                           {job.status.replace('_', ' ').toUpperCase()}
                         </span>
@@ -308,11 +289,11 @@ const Jobs = () => {
                       <div className="flex items-center space-x-4 text-sm text-gray-600 mb-2">
                         <div className="flex items-center space-x-1">
                           <Building2 className="h-4 w-4" />
-                          <span>{job.companyName}</span>
+                          <span>{job.company_name}</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <Settings className="h-4 w-4" />
-                          <span>{job.motorId}</span>
+                          <span>{job.motor_motor_id}</span>
                         </div>
                       </div>
                       <p className="text-gray-700 mb-3">{job.description}</p>
@@ -344,12 +325,12 @@ const Jobs = () => {
                 <div className="mb-4">
                   <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
                     <span>Progress</span>
-                    <span>{getProgressPercentage(job.status)}%</span>
+                    <span>{getProgressPercentage(job.status, job.progress_percentage)}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <div 
                       className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${getProgressPercentage(job.status)}%` }}
+                      style={{ width: `${getProgressPercentage(job.status, job.progress_percentage)}%` }}
                     ></div>
                   </div>
                   
@@ -369,16 +350,18 @@ const Jobs = () => {
                       <DollarSign className="h-4 w-4 text-green-600" />
                     </div>
                     <p className="text-xs text-gray-600">Estimated Cost</p>
-                    <p className="font-medium text-gray-900">${job.estimatedCost.toLocaleString()}</p>
+                    <p className="font-medium text-gray-900">
+                      ${job.estimated_cost ? job.estimated_cost.toLocaleString() : 'N/A'}
+                    </p>
                   </div>
                   
-                  {job.actualCost && (
+                  {job.actual_cost && (
                     <div className="text-center">
                       <div className="flex items-center justify-center mb-1">
                         <DollarSign className="h-4 w-4 text-blue-600" />
                       </div>
                       <p className="text-xs text-gray-600">Actual Cost</p>
-                      <p className="font-medium text-gray-900">${job.actualCost.toLocaleString()}</p>
+                      <p className="font-medium text-gray-900">${job.actual_cost.toLocaleString()}</p>
                     </div>
                   )}
                   
@@ -387,7 +370,9 @@ const Jobs = () => {
                       <Clock className="h-4 w-4 text-purple-600" />
                     </div>
                     <p className="text-xs text-gray-600">Labor Hours</p>
-                    <p className="font-medium text-gray-900">{job.laborHours}h</p>
+                    <p className="font-medium text-gray-900">
+                      {job.labor_hours ? `${job.labor_hours}h` : 'N/A'}
+                    </p>
                   </div>
                   
                   <div className="text-center">
@@ -395,26 +380,25 @@ const Jobs = () => {
                       <User className="h-4 w-4 text-gray-600" />
                     </div>
                     <p className="text-xs text-gray-600">Technician</p>
-                    <p className="font-medium text-gray-900">{job.technician}</p>
+                    <p className="font-medium text-gray-900">{job.technician_name || 'Unassigned'}</p>
                   </div>
                 </div>
 
                 {/* Dates */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6">
                   <div className="flex items-center space-x-4 text-sm text-gray-600 mb-2 sm:mb-0">
+                    {job.due_date && (
                     <div className="flex items-center space-x-1">
                       <Calendar className="h-4 w-4" />
-                      <span>Due: {new Date(job.dueDate).toLocaleDateString()}</span>
+                      <span>Due: {new Date(job.due_date).toLocaleDateString()}</span>
                     </div>
-                    {job.completedDate && (
+                    )}
+                    {job.completed_date && (
                       <div className="flex items-center space-x-1">
                         <CheckCircle className="h-4 w-4 text-green-600" />
-                        <span>Completed: {new Date(job.completedDate).toLocaleDateString()}</span>
+                        <span>Completed: {new Date(job.completed_date).toLocaleDateString()}</span>
                       </div>
                     )}
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    Updated {job.lastUpdate}
                   </div>
                 </div>
 
@@ -481,7 +465,11 @@ const Jobs = () => {
             </div>
             
             <div className="p-6">
-              <form className="space-y-6">
+              <form className="space-y-6" onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                handleCreateJob(formData);
+              }}>
                 {/* Step 1: Job Details */}
                 {activeStep === 0 && (
                   <div className="space-y-6">
@@ -490,11 +478,17 @@ const Jobs = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Company *
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select 
+                          name="company_id" 
+                          required 
+                          value={selectedCompany}
+                          onChange={(e) => setSelectedCompany(e.target.value)}
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
                           <option value="">Select Company</option>
-                          <option value="1">Manufacturing Solutions Ltd</option>
-                          <option value="2">Industrial Power Corp</option>
-                          <option value="3">Metro Manufacturing</option>
+                          {(companies || []).map(company => (
+                            <option key={company.id} value={company.id}>{company.name}</option>
+                          ))}
                         </select>
                       </div>
                       
@@ -502,10 +496,18 @@ const Jobs = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Motor *
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select 
+                          name="motor_id" 
+                          required 
+                          disabled={!selectedCompany || motorsLoading}
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                        >
                           <option value="">Select Motor</option>
-                          <option value="1">MT-2024-001 - Siemens 1LA7 130-4AA60</option>
-                          <option value="2">DC-2024-002 - Baldor CDP3455</option>
+                          {(companyMotors || []).map(motor => (
+                            <option key={motor.id} value={motor.id}>
+                              {motor.motor_id} - {motor.manufacturer} {motor.model}
+                            </option>
+                          ))}
                         </select>
                       </div>
                     </div>
@@ -515,6 +517,7 @@ const Jobs = () => {
                         Job Description *
                       </label>
                       <textarea
+                        name="description"
                         rows={4}
                         required
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -553,6 +556,7 @@ const Jobs = () => {
                           Start Date
                         </label>
                         <input
+                          name="start_date"
                           type="date"
                           defaultValue={new Date().toISOString().split('T')[0]}
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -564,6 +568,7 @@ const Jobs = () => {
                           Due Date *
                         </label>
                         <input
+                          name="due_date"
                           type="date"
                           required
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -577,6 +582,7 @@ const Jobs = () => {
                           Estimated Hours
                         </label>
                         <input
+                          name="labor_hours"
                           type="number"
                           step="0.5"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -588,11 +594,11 @@ const Jobs = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Assigned Technician
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="technician_id" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Technician</option>
-                          <option value="john">John Smith</option>
-                          <option value="mike">Mike Johnson</option>
-                          <option value="sarah">Sarah Wilson</option>
+                          {(technicians || []).map(tech => (
+                            <option key={tech.id} value={tech.id}>{tech.name}</option>
+                          ))}
                         </select>
                       </div>
                     </div>
@@ -610,6 +616,7 @@ const Jobs = () => {
                         <div className="flex">
                           <span className="px-3 py-3 bg-gray-50 border border-r-0 border-gray-300 rounded-l-lg text-sm text-gray-600">$</span>
                           <input
+                            name="labor_rate"
                             type="number"
                             step="0.01"
                             defaultValue={85}
@@ -623,6 +630,7 @@ const Jobs = () => {
                           Estimated Labor Hours
                         </label>
                         <input
+                          name="labor_hours_pricing"
                           type="number"
                           step="0.5"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -638,6 +646,7 @@ const Jobs = () => {
                       <div className="flex">
                         <span className="px-3 py-3 bg-gray-50 border border-r-0 border-gray-300 rounded-l-lg text-sm text-gray-600">$</span>
                         <input
+                          name="parts_cost"
                           type="number"
                           step="0.01"
                           className="flex-1 px-4 py-3 border border-gray-300 rounded-r-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -689,9 +698,10 @@ const Jobs = () => {
                     {activeStep === 2 && (
                       <button
                         type="submit"
+                        disabled={isCreating}
                         className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                       >
-                        Create Job
+                        {isCreating ? 'Creating...' : 'Create Job'}
                       </button>
                     )}
                   </div>

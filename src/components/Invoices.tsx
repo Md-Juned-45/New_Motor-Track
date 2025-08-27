@@ -13,98 +13,30 @@ import {
   Download,
   Building2
 } from 'lucide-react';
-
-interface Invoice {
-  id: string;
-  invoiceNumber: string;
-  companyName: string;
-  jobId: string;
-  jobNumber: string;
-  totalAmount: number;
-  taxAmount: number;
-  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
-  issueDate: string;
-  dueDate: string;
-  paidDate?: string;
-  paymentMethod?: string;
-  lastUpdate: string;
-}
+import { useAsync } from '../hooks/useAsync';
+import { invoiceService } from '../services/invoiceService';
+import { jobService } from '../services/jobService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
+import { Invoice } from '../utils/supabase';
 
 const Invoices = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRange, setDateRange] = useState('this_month');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const invoices: Invoice[] = [
-    {
-      id: '1',
-      invoiceNumber: 'INV-2024-001',
-      companyName: 'Manufacturing Solutions Ltd',
-      jobId: 'J001',
-      jobNumber: 'JOB-2024-089',
-      totalAmount: 825,
-      taxAmount: 66,
-      status: 'paid',
-      issueDate: '2024-01-20',
-      dueDate: '2024-02-19',
-      paidDate: '2024-01-25',
-      paymentMethod: 'bank_transfer',
-      lastUpdate: '5 days ago'
-    },
-    {
-      id: '2',
-      invoiceNumber: 'INV-2024-002',
-      companyName: 'Industrial Power Corp',
-      jobId: 'J002',
-      jobNumber: 'JOB-2024-088',
-      totalAmount: 450,
-      taxAmount: 36,
-      status: 'sent',
-      issueDate: '2024-01-22',
-      dueDate: '2024-02-21',
-      lastUpdate: '2 days ago'
-    },
-    {
-      id: '3',
-      invoiceNumber: 'INV-2024-003',
-      companyName: 'Precision Motors Inc',
-      jobId: 'J003',
-      jobNumber: 'JOB-2024-086',
-      totalAmount: 1150,
-      taxAmount: 92,
-      status: 'overdue',
-      issueDate: '2024-01-18',
-      dueDate: '2024-02-17',
-      lastUpdate: '1 week ago'
-    },
-    {
-      id: '4',
-      invoiceNumber: 'INV-2024-004',
-      companyName: 'Metro Manufacturing',
-      jobId: 'J004',
-      jobNumber: 'JOB-2024-087',
-      totalAmount: 200,
-      taxAmount: 16,
-      status: 'draft',
-      issueDate: '2024-01-23',
-      dueDate: '2024-02-22',
-      lastUpdate: '1 day ago'
-    },
-    {
-      id: '5',
-      invoiceNumber: 'INV-2024-005',
-      companyName: 'Power Systems Ltd',
-      jobId: 'J005',
-      jobNumber: 'JOB-2024-085',
-      totalAmount: 980,
-      taxAmount: 78.4,
-      status: 'sent',
-      issueDate: '2024-01-21',
-      dueDate: '2024-02-20',
-      lastUpdate: '3 days ago'
-    }
-  ];
+  // Fetch invoices and completed jobs
+  const { data: invoices, loading: invoicesLoading, error: invoicesError, refetch: refetchInvoices } = useAsync(
+    () => invoiceService.getAll(),
+    []
+  );
+
+  const { data: completedJobs, loading: jobsLoading, error: jobsError } = useAsync(
+    () => jobService.getByStatus('completed'),
+    []
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -148,10 +80,10 @@ const Invoices = () => {
     return diffDays;
   };
 
-  const filteredInvoices = invoices.filter(invoice => {
-    const matchesSearch = invoice.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         invoice.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         invoice.jobNumber.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredInvoices = (invoices || []).filter(invoice => {
+    const matchesSearch = invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         invoice.company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         invoice.job_number?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
     
@@ -159,19 +91,70 @@ const Invoices = () => {
   });
 
   // Calculate summary metrics
-  const totalOutstanding = invoices
+  const totalOutstanding = (invoices || [])
     .filter(inv => ['sent', 'overdue'].includes(inv.status))
-    .reduce((sum, inv) => sum + inv.totalAmount, 0);
+    .reduce((sum, inv) => sum + inv.total_amount, 0);
 
-  const thisMonthRevenue = invoices
-    .filter(inv => inv.status === 'paid' && new Date(inv.paidDate!).getMonth() === new Date().getMonth())
-    .reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const thisMonthRevenue = (invoices || [])
+    .filter(inv => inv.status === 'paid' && inv.paid_date && new Date(inv.paid_date).getMonth() === new Date().getMonth())
+    .reduce((sum, inv) => sum + inv.total_amount, 0);
 
-  const overdueAmount = invoices
+  const overdueAmount = (invoices || [])
     .filter(inv => inv.status === 'overdue')
-    .reduce((sum, inv) => sum + inv.totalAmount, 0);
+    .reduce((sum, inv) => sum + inv.total_amount, 0);
 
   const avgPaymentTime = 15; // Placeholder calculation
+
+  const handleCreateInvoice = async (formData: FormData) => {
+    setIsCreating(true);
+    try {
+      const subtotal = parseFloat(formData.get('subtotal') as string) || 0;
+      const taxRate = 0.08; // 8% tax rate
+      const taxAmount = subtotal * taxRate;
+      const totalAmount = subtotal + taxAmount;
+      
+      const invoiceData = {
+        job_id: formData.get('job_id') as string,
+        company_id: formData.get('company_id') as string,
+        subtotal,
+        tax_amount: taxAmount,
+        total_amount: totalAmount,
+        status: 'draft' as const,
+        issue_date: formData.get('issue_date') as string,
+        due_date: formData.get('due_date') as string,
+        payment_terms: parseInt(formData.get('payment_terms') as string) || 30,
+        notes: formData.get('notes') as string || undefined
+      };
+      
+      await invoiceService.create(invoiceData);
+      setShowCreateModal(false);
+      refetchInvoices();
+    } catch (error) {
+      console.error('Error creating invoice:', error);
+      alert('Failed to create invoice. Please try again.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  if (invoicesLoading || jobsLoading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (invoicesError || jobsError) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage 
+          message={invoicesError || jobsError || 'An error occurred'} 
+          onRetry={refetchInvoices} 
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -316,33 +299,33 @@ const Invoices = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredInvoices.map((invoice) => {
-                const daysUntilDue = getDaysUntilDue(invoice.dueDate);
+                const daysUntilDue = getDaysUntilDue(invoice.due_date);
                 const isOverdue = daysUntilDue < 0 && invoice.status !== 'paid';
                 
                 return (
                   <tr key={invoice.id} className={`hover:bg-gray-50 ${isOverdue ? 'bg-red-50' : ''}`}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="font-medium text-gray-900">{invoice.invoiceNumber}</div>
-                        <div className="text-sm text-gray-500">{new Date(invoice.issueDate).toLocaleDateString()}</div>
+                        <div className="font-medium text-gray-900">{invoice.invoice_number}</div>
+                        <div className="text-sm text-gray-500">{new Date(invoice.issue_date).toLocaleDateString()}</div>
                       </div>
                     </td>
                     
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <Building2 className="h-4 w-4 text-gray-400 mr-2" />
-                        <span className="text-sm text-gray-900">{invoice.companyName}</span>
+                        <span className="text-sm text-gray-900">{invoice.company_name}</span>
                       </div>
                     </td>
                     
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm font-medium text-gray-900">{invoice.jobNumber}</span>
+                      <span className="text-sm font-medium text-gray-900">{invoice.job_number}</span>
                     </td>
                     
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="font-medium text-gray-900">${invoice.totalAmount.toLocaleString()}</div>
-                        <div className="text-sm text-gray-500">Tax: ${invoice.taxAmount.toLocaleString()}</div>
+                        <div className="font-medium text-gray-900">${invoice.total_amount.toLocaleString()}</div>
+                        <div className="text-sm text-gray-500">Tax: ${invoice.tax_amount.toLocaleString()}</div>
                       </div>
                     </td>
                     
@@ -356,7 +339,7 @@ const Invoices = () => {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
                         <div className={`text-sm font-medium ${isOverdue ? 'text-red-600' : 'text-gray-900'}`}>
-                          {new Date(invoice.dueDate).toLocaleDateString()}
+                          {new Date(invoice.due_date).toLocaleDateString()}
                         </div>
                         {isOverdue && (
                           <div className="text-xs text-red-600">
@@ -418,18 +401,37 @@ const Invoices = () => {
             </div>
             
             <div className="p-6">
-              <form className="space-y-6">
+              <form className="space-y-6" onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                handleCreateInvoice(formData);
+              }}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Select Job *
                     </label>
-                    <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <select 
+                      name="job_id" 
+                      required 
+                      onChange={(e) => {
+                        const selectedJob = completedJobs?.find(job => job.id === e.target.value);
+                        if (selectedJob) {
+                          // Auto-fill company_id
+                          const companyInput = document.querySelector('input[name="company_id"]') as HTMLInputElement;
+                          if (companyInput) companyInput.value = selectedJob.company_id;
+                        }
+                      }}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
                       <option value="">Select completed job</option>
-                      <option value="1">JOB-2024-089 - Manufacturing Solutions Ltd</option>
-                      <option value="2">JOB-2024-088 - Industrial Power Corp</option>
-                      <option value="3">JOB-2024-086 - Precision Motors Inc</option>
+                      {(completedJobs || []).map(job => (
+                        <option key={job.id} value={job.id}>
+                          {job.job_number} - {job.company_name}
+                        </option>
+                      ))}
                     </select>
+                    <input type="hidden" name="company_id" />
                   </div>
                   
                   <div>
@@ -437,6 +439,7 @@ const Invoices = () => {
                       Invoice Date *
                     </label>
                     <input
+                      name="issue_date"
                       type="date"
                       defaultValue={new Date().toISOString().split('T')[0]}
                       required
@@ -451,6 +454,7 @@ const Invoices = () => {
                       Due Date *
                     </label>
                     <input
+                      name="due_date"
                       type="date"
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -461,7 +465,7 @@ const Invoices = () => {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Payment Terms
                     </label>
-                    <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <select name="payment_terms" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                       <option value="30">Net 30 days</option>
                       <option value="15">Net 15 days</option>
                       <option value="45">Net 45 days</option>
@@ -491,6 +495,7 @@ const Invoices = () => {
                             <input
                               type="text"
                               placeholder="Labor - Motor Rewind"
+                              name="line_item_1_description"
                               className="w-full border-0 focus:ring-0 text-sm"
                             />
                           </td>
@@ -498,6 +503,7 @@ const Invoices = () => {
                             <input
                               type="number"
                               placeholder="12"
+                              name="line_item_1_quantity"
                               className="w-full border-0 focus:ring-0 text-sm text-center"
                             />
                           </td>
@@ -505,6 +511,7 @@ const Invoices = () => {
                             <input
                               type="number"
                               placeholder="85.00"
+                              name="line_item_1_rate"
                               className="w-full border-0 focus:ring-0 text-sm text-center"
                             />
                           </td>
@@ -517,6 +524,7 @@ const Invoices = () => {
                             <input
                               type="text"
                               placeholder="Parts & Materials"
+                              name="line_item_2_description"
                               className="w-full border-0 focus:ring-0 text-sm"
                             />
                           </td>
@@ -524,6 +532,7 @@ const Invoices = () => {
                             <input
                               type="number"
                               placeholder="1"
+                              name="line_item_2_quantity"
                               className="w-full border-0 focus:ring-0 text-sm text-center"
                             />
                           </td>
@@ -531,6 +540,7 @@ const Invoices = () => {
                             <input
                               type="number"
                               placeholder="150.00"
+                              name="line_item_2_rate"
                               className="w-full border-0 focus:ring-0 text-sm text-center"
                             />
                           </td>
@@ -563,6 +573,7 @@ const Invoices = () => {
                     Notes
                   </label>
                   <textarea
+                    name="notes"
                     rows={3}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Additional notes for the customer..."
@@ -585,13 +596,15 @@ const Invoices = () => {
                   </button>
                   <button
                     type="submit"
+                    disabled={isCreating}
                     className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center space-x-2"
                   >
                     <Send className="h-4 w-4" />
-                    <span>Send Invoice</span>
+                    <span>{isCreating ? 'Creating...' : 'Send Invoice'}</span>
                   </button>
                 </div>
               </form>
+              <input type="hidden" name="subtotal" value="1170" />
             </div>
           </div>
         </div>

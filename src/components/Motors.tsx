@@ -12,27 +12,12 @@ import {
   Wrench,
   Eye
 } from 'lucide-react';
-
-interface Motor {
-  id: string;
-  companyId: string;
-  companyName: string;
-  motorId: string;
-  manufacturer: string;
-  model: string;
-  serialNumber: string;
-  type: 'AC' | 'DC' | 'Servo' | 'Generator' | 'Turbine';
-  voltage: string;
-  amperage: string;
-  power: string;
-  rpm: string;
-  phase: 'single' | 'three';
-  frequency: string;
-  condition: 'excellent' | 'good' | 'fair' | 'poor';
-  location: string;
-  lastService: string;
-  createdAt: string;
-}
+import { useAsync } from '../hooks/useAsync';
+import { motorService } from '../services/motorService';
+import { companyService } from '../services/companyService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
+import { Motor, Company } from '../utils/supabase';
 
 const Motors = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,89 +25,18 @@ const Motors = () => {
   const [companyFilter, setCompanyFilter] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const motors: Motor[] = [
-    {
-      id: 'M001',
-      companyId: 'C001',
-      companyName: 'Manufacturing Solutions Ltd',
-      motorId: 'MT-2024-001',
-      manufacturer: 'Siemens',
-      model: '1LA7 130-4AA60',
-      serialNumber: 'SN2024001',
-      type: 'AC',
-      voltage: '460V',
-      amperage: '14.2A',
-      power: '7.5 HP',
-      rpm: '1750',
-      phase: 'three',
-      frequency: '60Hz',
-      condition: 'good',
-      location: 'Production Line A',
-      lastService: '2024-01-15',
-      createdAt: '2024-01-10'
-    },
-    {
-      id: 'M002',
-      companyId: 'C002',
-      companyName: 'Industrial Power Corp',
-      motorId: 'DC-2024-002',
-      manufacturer: 'Baldor',
-      model: 'CDP3455',
-      serialNumber: 'BL2024002',
-      type: 'DC',
-      voltage: '240V',
-      amperage: '18.5A',
-      power: '5 HP',
-      rpm: '1800',
-      phase: 'single',
-      frequency: 'DC',
-      condition: 'fair',
-      location: 'Conveyor System',
-      lastService: '2023-11-20',
-      createdAt: '2023-11-15'
-    },
-    {
-      id: 'M003',
-      companyId: 'C001',
-      companyName: 'Manufacturing Solutions Ltd',
-      motorId: 'SV-2024-003',
-      manufacturer: 'Allen-Bradley',
-      model: 'MPL-B330P-SJ24AA',
-      serialNumber: 'AB2024003',
-      type: 'Servo',
-      voltage: '460V',
-      amperage: '8.1A',
-      power: '3 HP',
-      rpm: '3000',
-      phase: 'three',
-      frequency: '60Hz',
-      condition: 'excellent',
-      location: 'CNC Machine 3',
-      lastService: '2024-02-01',
-      createdAt: '2024-01-25'
-    },
-    {
-      id: 'M004',
-      companyId: 'C003',
-      companyName: 'Metro Manufacturing',
-      motorId: 'GN-2024-004',
-      manufacturer: 'Caterpillar',
-      model: 'C15 ACERT',
-      serialNumber: 'CAT2024004',
-      type: 'Generator',
-      voltage: '480V',
-      amperage: '156A',
-      power: '125 kW',
-      rpm: '1800',
-      phase: 'three',
-      frequency: '60Hz',
-      condition: 'good',
-      location: 'Emergency Power Room',
-      lastService: '2024-01-30',
-      createdAt: '2024-01-20'
-    }
-  ];
+  // Fetch motors and companies data
+  const { data: motors, loading: motorsLoading, error: motorsError, refetch: refetchMotors } = useAsync(
+    () => motorService.getAll(),
+    []
+  );
+
+  const { data: companies, loading: companiesLoading, error: companiesError } = useAsync(
+    () => companyService.getAll(),
+    []
+  );
 
   const getTypeColor = (type: string) => {
     switch (type) {
@@ -156,20 +70,72 @@ const Motors = () => {
     }
   };
 
-  const filteredMotors = motors.filter(motor => {
-    const matchesSearch = motor.motorId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+  const filteredMotors = (motors || []).filter(motor => {
+    const matchesSearch = motor.motor_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          motor.manufacturer.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          motor.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         motor.serialNumber.toLowerCase().includes(searchTerm.toLowerCase());
+                         motor.serial_number?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesType = typeFilter === 'all' || motor.type === typeFilter;
-    const matchesCompany = companyFilter === 'all' || motor.companyId === companyFilter;
+    const matchesCompany = companyFilter === 'all' || motor.company_id === companyFilter;
     
     return matchesSearch && matchesType && matchesCompany;
   });
 
-  const companies = Array.from(new Set(motors.map(m => ({ id: m.companyId, name: m.companyName }))))
-    .filter((company, index, arr) => arr.findIndex(c => c.id === company.id) === index);
+  const handleCreateMotor = async (formData: FormData) => {
+    setIsCreating(true);
+    try {
+      const motorData = {
+        company_id: formData.get('company_id') as string,
+        motor_id: formData.get('motor_id') as string,
+        manufacturer: formData.get('manufacturer') as string || undefined,
+        model: formData.get('model') as string || undefined,
+        serial_number: formData.get('serial_number') as string || undefined,
+        type: formData.get('type') as Motor['type'],
+        voltage: formData.get('voltage') as string || undefined,
+        amperage: formData.get('amperage') as string || undefined,
+        power: formData.get('power') as string || undefined,
+        phase: formData.get('phase') as Motor['phase'] || undefined,
+        frequency: formData.get('frequency') as string || undefined,
+        connection_type: formData.get('connection_type') as string || undefined,
+        rpm: formData.get('rpm') as string || undefined,
+        frame_size: formData.get('frame_size') as string || undefined,
+        mounting_type: formData.get('mounting_type') as string || undefined,
+        insulation_class: formData.get('insulation_class') as string || undefined,
+        duty_cycle: formData.get('duty_cycle') as string || undefined,
+        environment: formData.get('environment') as string || undefined,
+        condition: formData.get('condition') as Motor['condition'] || 'good',
+        location: formData.get('location') as string || undefined,
+        technical_notes: formData.get('technical_notes') as string || undefined
+      };
+      
+      await motorService.create(motorData);
+      setShowAddModal(false);
+      setActiveTab(0);
+      refetchMotors();
+    } catch (error) {
+      console.error('Error creating motor:', error);
+      alert('Failed to create motor. Please try again.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  if (motorsLoading || companiesLoading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (motorsError || companiesError) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage message={motorsError || companiesError || 'An error occurred'} onRetry={refetchMotors} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -224,7 +190,7 @@ const Motors = () => {
               className="w-full sm:w-auto px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="all">All Companies</option>
-              {companies.map(company => (
+              {(companies || []).map(company => (
                 <option key={company.id} value={company.id}>{company.name}</option>
               ))}
             </select>
@@ -244,8 +210,8 @@ const Motors = () => {
                     <Settings className="h-6 w-6 text-gray-600" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-lg text-gray-900">{motor.motorId}</h3>
-                    <p className="text-sm text-gray-600">{motor.companyName}</p>
+                    <h3 className="font-bold text-lg text-gray-900">{motor.motor_id}</h3>
+                    <p className="text-sm text-gray-600">{motor.company_name}</p>
                   </div>
                 </div>
                 <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getTypeColor(motor.type)}`}>
@@ -257,15 +223,15 @@ const Motors = () => {
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Manufacturer:</span>
-                  <span className="font-medium text-gray-900">{motor.manufacturer}</span>
+                  <span className="font-medium text-gray-900">{motor.manufacturer || 'N/A'}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Model:</span>
-                  <span className="font-medium text-gray-900">{motor.model}</span>
+                  <span className="font-medium text-gray-900">{motor.model || 'N/A'}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Serial Number:</span>
-                  <span className="font-mono text-sm text-gray-900">{motor.serialNumber}</span>
+                  <span className="font-mono text-sm text-gray-900">{motor.serial_number || 'N/A'}</span>
                 </div>
               </div>
 
@@ -304,11 +270,14 @@ const Motors = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-500">Last Service</p>
-                  <p className="text-sm font-medium text-gray-900">{new Date(motor.lastService).toLocaleDateString()}</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {motor.last_service ? new Date(motor.last_service).toLocaleDateString() : 'N/A'}
+                  </p>
                 </div>
               </div>
 
               {/* Location */}
+              {motor.location && (
               <div className="mb-6">
                 <div className="flex items-center space-x-2 text-sm">
                   <Info className="h-4 w-4 text-gray-400" />
@@ -316,6 +285,7 @@ const Motors = () => {
                   <span className="font-medium text-gray-900">{motor.location}</span>
                 </div>
               </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex space-x-2">
@@ -372,7 +342,11 @@ const Motors = () => {
             </div>
             
             <div className="p-6">
-              <form className="space-y-6">
+              <form className="space-y-6" onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                handleCreateMotor(formData);
+              }}>
                 {/* Tab 1: Basic Information */}
                 {activeTab === 0 && (
                   <div className="space-y-6">
@@ -381,9 +355,9 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Company *
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="company_id" required className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Company</option>
-                          {companies.map(company => (
+                          {(companies || []).map(company => (
                             <option key={company.id} value={company.id}>{company.name}</option>
                           ))}
                         </select>
@@ -394,6 +368,7 @@ const Motors = () => {
                           Motor ID *
                         </label>
                         <input
+                          name="motor_id"
                           type="text"
                           required
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -408,6 +383,7 @@ const Motors = () => {
                           Manufacturer
                         </label>
                         <input
+                          name="manufacturer"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="e.g., Siemens, Baldor, ABB"
@@ -419,6 +395,7 @@ const Motors = () => {
                           Model
                         </label>
                         <input
+                          name="model"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="Model number"
@@ -432,6 +409,7 @@ const Motors = () => {
                           Serial Number
                         </label>
                         <input
+                          name="serial_number"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="Serial number"
@@ -442,7 +420,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Type *
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="type" required className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Type</option>
                           <option value="AC">AC Motor</option>
                           <option value="DC">DC Motor</option>
@@ -465,6 +443,7 @@ const Motors = () => {
                         </label>
                         <div className="flex">
                           <input
+                            name="voltage"
                             type="number"
                             required
                             className="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -480,6 +459,7 @@ const Motors = () => {
                         </label>
                         <div className="flex">
                           <input
+                            name="amperage"
                             type="number"
                             step="0.1"
                             className="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -497,6 +477,7 @@ const Motors = () => {
                         </label>
                         <div className="flex">
                           <input
+                            name="power"
                             type="number"
                             step="0.1"
                             className="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -533,6 +514,7 @@ const Motors = () => {
                         </label>
                         <div className="flex">
                           <input
+                            name="frequency"
                             type="number"
                             defaultValue={60}
                             className="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -545,7 +527,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Connection Type
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="connection_type" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Connection</option>
                           <option value="star">Star (Y)</option>
                           <option value="delta">Delta (Δ)</option>
@@ -565,6 +547,7 @@ const Motors = () => {
                           RPM
                         </label>
                         <input
+                          name="rpm"
                           type="number"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="1750"
@@ -576,6 +559,7 @@ const Motors = () => {
                           Frame Size
                         </label>
                         <input
+                          name="frame_size"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="e.g., 213T, 215T"
@@ -588,7 +572,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Mounting Type
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="mounting_type" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Mounting</option>
                           <option value="foot">Foot Mount</option>
                           <option value="flange">Flange Mount</option>
@@ -601,7 +585,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Insulation Class
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="insulation_class" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Class</option>
                           <option value="A">Class A</option>
                           <option value="B">Class B</option>
@@ -617,6 +601,7 @@ const Motors = () => {
                           Duty Cycle
                         </label>
                         <input
+                          name="duty_cycle"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="e.g., S1, S2, S3"
@@ -627,7 +612,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Environment
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="environment" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Environment</option>
                           <option value="indoor">Indoor</option>
                           <option value="outdoor">Outdoor</option>
@@ -646,7 +631,7 @@ const Motors = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Current Condition *
                         </label>
-                        <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select name="condition" required className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select Condition</option>
                           <option value="excellent">Excellent - Like new, no issues</option>
                           <option value="good">Good - Minor wear, fully functional</option>
@@ -660,6 +645,7 @@ const Motors = () => {
                           Installation Location
                         </label>
                         <input
+                          name="location"
                           type="text"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="e.g., Production Line A, Building 2"
@@ -672,6 +658,7 @@ const Motors = () => {
                         Technical Notes
                       </label>
                       <textarea
+                        name="technical_notes"
                         rows={4}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="Additional technical notes, special requirements, maintenance history, etc."
@@ -714,9 +701,10 @@ const Motors = () => {
                     {activeTab === 3 && (
                       <button
                         type="submit"
+                        disabled={isCreating}
                         className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                       >
-                        Save Motor
+                        {isCreating ? 'Saving...' : 'Save Motor'}
                       </button>
                     )}
                   </div>

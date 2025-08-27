@@ -13,106 +13,23 @@ import {
   Eye,
   Clock
 } from 'lucide-react';
-
-interface Company {
-  id: string;
-  name: string;
-  contactName: string;
-  email: string;
-  phone: string;
-  address: string;
-  paymentTerms: number;
-  status: 'active' | 'inactive' | 'payment_due' | 'overdue';
-  motorCount: number;
-  activeJobs: number;
-  lastUpdated: string;
-}
+import { useAsync } from '../hooks/useAsync';
+import { companyService } from '../services/companyService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
+import { Company } from '../utils/supabase';
 
 const Companies = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const companies: Company[] = [
-    {
-      id: '1',
-      name: 'Manufacturing Solutions Ltd',
-      contactName: 'Sarah Johnson',
-      email: 'sarah@manufacturingsolutions.com',
-      phone: '+1-555-0123',
-      address: '1234 Industrial Ave, City, State 12345',
-      paymentTerms: 30,
-      status: 'active',
-      motorCount: 15,
-      activeJobs: 3,
-      lastUpdated: '2 hours ago'
-    },
-    {
-      id: '2',
-      name: 'Industrial Power Corp',
-      contactName: 'Mike Rodriguez',
-      email: 'm.rodriguez@industrialpower.com',
-      phone: '+1-555-0456',
-      address: '5678 Factory Blvd, City, State 12345',
-      paymentTerms: 45,
-      status: 'payment_due',
-      motorCount: 8,
-      activeJobs: 1,
-      lastUpdated: '1 day ago'
-    },
-    {
-      id: '3',
-      name: 'Metro Manufacturing',
-      contactName: 'Lisa Chen',
-      email: 'lisa.chen@metromanufacturing.com',
-      phone: '+1-555-0789',
-      address: '9012 Production Dr, City, State 12345',
-      paymentTerms: 30,
-      status: 'active',
-      motorCount: 22,
-      activeJobs: 5,
-      lastUpdated: '3 hours ago'
-    },
-    {
-      id: '4',
-      name: 'Precision Motors Inc',
-      contactName: 'David Park',
-      email: 'david@precisionmotors.com',
-      phone: '+1-555-0234',
-      address: '3456 Tech Park Way, City, State 12345',
-      paymentTerms: 15,
-      status: 'overdue',
-      motorCount: 12,
-      activeJobs: 0,
-      lastUpdated: '5 days ago'
-    },
-    {
-      id: '5',
-      name: 'Power Systems Ltd',
-      contactName: 'Emma Wilson',
-      email: 'emma.wilson@powersystems.com',
-      phone: '+1-555-0567',
-      address: '7890 Energy Ln, City, State 12345',
-      paymentTerms: 30,
-      status: 'active',
-      motorCount: 18,
-      activeJobs: 2,
-      lastUpdated: '1 hour ago'
-    },
-    {
-      id: '6',
-      name: 'Advanced Automation',
-      contactName: 'Tom Miller',
-      email: 'tom@advancedautomation.com',
-      phone: '+1-555-0890',
-      address: '2468 Automation St, City, State 12345',
-      paymentTerms: 60,
-      status: 'inactive',
-      motorCount: 5,
-      activeJobs: 0,
-      lastUpdated: '2 weeks ago'
-    }
-  ];
+  // Fetch companies data
+  const { data: companies, loading, error, refetch } = useAsync(
+    () => companyService.getAll(),
+    []
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -129,15 +46,55 @@ const Companies = () => {
     }
   };
 
-  const filteredCompanies = companies.filter(company => {
+  const filteredCompanies = (companies || []).filter(company => {
     const matchesSearch = company.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         company.contactName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         company.contact_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          company.email.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || company.status === statusFilter;
     
     return matchesSearch && matchesStatus;
   });
+
+  const handleCreateCompany = async (formData: FormData) => {
+    setIsCreating(true);
+    try {
+      const companyData = {
+        name: formData.get('name') as string,
+        contact_name: formData.get('contact_name') as string,
+        email: formData.get('email') as string,
+        phone: formData.get('phone') as string || undefined,
+        address: formData.get('address') as string || undefined,
+        payment_terms: parseInt(formData.get('payment_terms') as string) || 30,
+        status: formData.get('status') as Company['status'] || 'active'
+      };
+      
+      await companyService.create(companyData);
+      setShowAddModal(false);
+      refetch();
+    } catch (error) {
+      console.error('Error creating company:', error);
+      alert('Failed to create company. Please try again.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage message={error} onRetry={refetch} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -217,12 +174,12 @@ const Companies = () => {
                   <div className="w-5 h-5 flex items-center justify-center">
                     <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
                       <span className="text-xs font-medium text-gray-600">
-                        {company.contactName.split(' ').map(n => n[0]).join('')}
+                        {company.contact_name.split(' ').map(n => n[0]).join('')}
                       </span>
                     </div>
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">{company.contactName}</p>
+                    <p className="font-medium text-gray-900">{company.contact_name}</p>
                   </div>
                 </div>
                 
@@ -231,28 +188,24 @@ const Companies = () => {
                   <p className="text-sm text-gray-600">{company.email}</p>
                 </div>
                 
+                {company.phone && (
                 <div className="flex items-center space-x-3">
                   <Phone className="h-4 w-4 text-gray-400" />
                   <p className="text-sm text-gray-600">{company.phone}</p>
                 </div>
+                )}
               </div>
 
               {/* Stats */}
               <div className="flex items-center justify-between mb-6 p-3 bg-gray-50 rounded-lg">
                 <div className="flex items-center space-x-2">
                   <Settings className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">{company.motorCount} motors</span>
+                  <span className="text-sm text-gray-600">{company.motor_count} motors</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Wrench className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">{company.activeJobs} active jobs</span>
+                  <span className="text-sm text-gray-600">{company.active_jobs} active jobs</span>
                 </div>
-              </div>
-
-              {/* Last Updated */}
-              <div className="flex items-center space-x-2 text-xs text-gray-500 mb-4">
-                <Clock className="h-3 w-3" />
-                <span>Updated {company.lastUpdated}</span>
               </div>
 
               {/* Action Buttons */}
@@ -289,13 +242,18 @@ const Companies = () => {
             </div>
             
             <div className="p-6">
-              <form className="space-y-6">
+              <form className="space-y-6" onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                handleCreateCompany(formData);
+              }}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Company Name *
                     </label>
                     <input
+                      name="name"
                       type="text"
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -308,6 +266,7 @@ const Companies = () => {
                       Contact Name *
                     </label>
                     <input
+                      name="contact_name"
                       type="text"
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -322,6 +281,7 @@ const Companies = () => {
                       Email Address *
                     </label>
                     <input
+                      name="email"
                       type="email"
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -334,6 +294,7 @@ const Companies = () => {
                       Phone Number
                     </label>
                     <input
+                      name="phone"
                       type="tel"
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="+1-555-0123"
@@ -346,6 +307,7 @@ const Companies = () => {
                     Address
                   </label>
                   <textarea
+                    name="address"
                     rows={3}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Full business address"
@@ -358,6 +320,7 @@ const Companies = () => {
                       Payment Terms (days)
                     </label>
                     <input
+                      name="payment_terms"
                       type="number"
                       defaultValue={30}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -368,7 +331,7 @@ const Companies = () => {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Status
                     </label>
-                    <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <select name="status" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="payment_due">Payment Due</option>
@@ -387,9 +350,10 @@ const Companies = () => {
                   </button>
                   <button
                     type="submit"
+                    disabled={isCreating}
                     className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                   >
-                    Save Company
+                    {isCreating ? 'Saving...' : 'Save Company'}
                   </button>
                 </div>
               </form>
