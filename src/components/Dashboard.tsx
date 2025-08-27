@@ -10,12 +10,59 @@ import {
   CheckCircle,
   Plus
 } from 'lucide-react';
+import { useAsync } from '../hooks/useAsync';
+import { companyService } from '../services/companyService';
+import { motorService } from '../services/motorService';
+import { jobService } from '../services/jobService';
+import { invoiceService } from '../services/invoiceService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
 
 const Dashboard = () => {
+  // Fetch dashboard data
+  const { data: companies, loading: companiesLoading, error: companiesError } = useAsync(
+    () => companyService.getAll(),
+    []
+  );
+
+  const { data: motors, loading: motorsLoading, error: motorsError } = useAsync(
+    () => motorService.getAll(),
+    []
+  );
+
+  const { data: jobs, loading: jobsLoading, error: jobsError } = useAsync(
+    () => jobService.getAll(),
+    []
+  );
+
+  const { data: invoices, loading: invoicesLoading, error: invoicesError } = useAsync(
+    () => invoiceService.getAll(),
+    []
+  );
+
+  // Calculate metrics
+  const activeCompanies = (companies || []).filter(c => c.status === 'active').length;
+  const totalMotors = (motors || []).length;
+  
+  const thisMonth = new Date().getMonth();
+  const thisYear = new Date().getFullYear();
+  const jobsThisMonth = (jobs || []).filter(j => {
+    const jobDate = new Date(j.created_at);
+    return jobDate.getMonth() === thisMonth && jobDate.getFullYear() === thisYear;
+  }).length;
+  
+  const monthlyRevenue = (invoices || [])
+    .filter(inv => {
+      if (inv.status !== 'paid' || !inv.paid_date) return false;
+      const paidDate = new Date(inv.paid_date);
+      return paidDate.getMonth() === thisMonth && paidDate.getFullYear() === thisYear;
+    })
+    .reduce((sum, inv) => sum + inv.total_amount, 0);
+
   const metrics = [
     {
       title: 'Active Companies',
-      value: '24',
+      value: activeCompanies.toString(),
       change: '+12%',
       trend: 'up',
       icon: Building2,
@@ -23,7 +70,7 @@ const Dashboard = () => {
     },
     {
       title: 'Motors in Database',
-      value: '187',
+      value: totalMotors.toString(),
       change: '+8%',
       trend: 'up',
       icon: Settings,
@@ -31,7 +78,7 @@ const Dashboard = () => {
     },
     {
       title: 'Jobs This Month',
-      value: '42',
+      value: jobsThisMonth.toString(),
       change: '+18%',
       trend: 'up',
       icon: Wrench,
@@ -39,7 +86,7 @@ const Dashboard = () => {
     },
     {
       title: 'Monthly Revenue',
-      value: '$18,450',
+      value: `$${monthlyRevenue.toLocaleString()}`,
       change: '+24%',
       trend: 'up',
       icon: DollarSign,
@@ -47,43 +94,16 @@ const Dashboard = () => {
     }
   ];
 
-  const recentActivity = [
-    {
-      id: 'JOB-2024-089',
-      company: 'Manufacturing Solutions Ltd',
-      status: 'completed',
-      date: '2 hours ago',
-      description: 'Stator rewind completed'
-    },
-    {
-      id: 'JOB-2024-088',
-      company: 'Industrial Power Corp',
-      status: 'in_progress',
-      date: '4 hours ago',
-      description: 'Rotor bearing replacement'
-    },
-    {
-      id: 'JOB-2024-087',
-      company: 'Metro Manufacturing',
-      status: 'pending',
-      date: '6 hours ago',
-      description: 'AC motor diagnostic'
-    },
-    {
-      id: 'JOB-2024-086',
-      company: 'Precision Motors Inc',
-      status: 'delivered',
-      date: '1 day ago',
-      description: 'Complete motor rebuild'
-    },
-    {
-      id: 'JOB-2024-085',
-      company: 'Power Systems Ltd',
-      status: 'in_progress',
-      date: '1 day ago',
-      description: 'Generator maintenance'
-    }
-  ];
+  // Get recent activity from jobs
+  const recentActivity = (jobs || [])
+    .slice(0, 5)
+    .map(job => ({
+      id: job.job_number,
+      company: job.company_name || 'Unknown Company',
+      status: job.status,
+      date: new Date(job.updated_at).toLocaleDateString(),
+      description: job.description.substring(0, 50) + '...'
+    }));
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -114,6 +134,25 @@ const Dashboard = () => {
         return <AlertCircle className="h-4 w-4" />;
     }
   };
+
+  const loading = companiesLoading || motorsLoading || jobsLoading || invoicesLoading;
+  const error = companiesError || motorsError || jobsError || invoicesError;
+
+  if (loading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage message={error} onRetry={() => window.location.reload()} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -198,6 +237,11 @@ const Dashboard = () => {
                   </div>
                 </div>
               ))}
+              {recentActivity.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No recent activity</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

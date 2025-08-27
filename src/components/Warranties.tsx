@@ -12,99 +12,24 @@ import {
   Wrench,
   RefreshCw
 } from 'lucide-react';
-
-interface Warranty {
-  id: string;
-  jobNumber: string;
-  companyName: string;
-  motorId: string;
-  workDescription: string;
-  warrantyStart: string;
-  warrantyEnd: string;
-  warrantyPeriod: number; // in months
-  status: 'active' | 'expired' | 'claimed' | 'extended';
-  claimStatus?: 'none' | 'pending' | 'approved' | 'denied';
-  lastInspection?: string;
-  notes?: string;
-}
+import { useAsync } from '../hooks/useAsync';
+import { warrantyService } from '../services/warrantyService';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
+import { Warranty } from '../utils/supabase';
 
 const Warranties = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showExtendModal, setShowExtendModal] = useState(false);
-  const [selectedWarranty, setSelectedWarranty] = useState<Warranty | null>(null);
+  const [selectedWarranty, setSelectedWarranty] = useState<any>(null);
+  const [isExtending, setIsExtending] = useState(false);
 
-  const warranties: Warranty[] = [
-    {
-      id: '1',
-      jobNumber: 'JOB-2024-089',
-      companyName: 'Manufacturing Solutions Ltd',
-      motorId: 'MT-2024-001',
-      workDescription: 'Complete stator rewind with new insulation system',
-      warrantyStart: '2024-01-19',
-      warrantyEnd: '2025-01-19',
-      warrantyPeriod: 12,
-      status: 'active',
-      claimStatus: 'none',
-      lastInspection: '2024-01-19',
-      notes: 'Standard 12-month warranty on all electrical work'
-    },
-    {
-      id: '2',
-      jobNumber: 'JOB-2024-086',
-      companyName: 'Precision Motors Inc',
-      motorId: 'SV-2024-003',
-      workDescription: 'Complete motor rebuild with upgraded components',
-      warrantyStart: '2024-01-18',
-      warrantyEnd: '2025-07-18',
-      warrantyPeriod: 18,
-      status: 'active',
-      claimStatus: 'none',
-      lastInspection: '2024-01-18',
-      notes: 'Extended 18-month warranty due to premium component upgrade'
-    },
-    {
-      id: '3',
-      jobNumber: 'JOB-2023-045',
-      companyName: 'Industrial Power Corp',
-      motorId: 'DC-2023-010',
-      workDescription: 'Rotor replacement and bearing maintenance',
-      warrantyStart: '2023-06-15',
-      warrantyEnd: '2024-06-15',
-      warrantyPeriod: 12,
-      status: 'expired',
-      claimStatus: 'none',
-      lastInspection: '2023-12-15'
-    },
-    {
-      id: '4',
-      jobNumber: 'JOB-2023-078',
-      companyName: 'Metro Manufacturing',
-      motorId: 'AC-2023-025',
-      workDescription: 'Stator rewind and performance optimization',
-      warrantyStart: '2023-08-10',
-      warrantyEnd: '2024-08-10',
-      warrantyPeriod: 12,
-      status: 'claimed',
-      claimStatus: 'approved',
-      lastInspection: '2024-02-10',
-      notes: 'Warranty claim approved - minor adjustment needed'
-    },
-    {
-      id: '5',
-      jobNumber: 'JOB-2024-032',
-      companyName: 'Power Systems Ltd',
-      motorId: 'GN-2024-004',
-      workDescription: 'Generator maintenance and calibration',
-      warrantyStart: '2024-01-21',
-      warrantyEnd: '2024-07-21',
-      warrantyPeriod: 6,
-      status: 'active',
-      claimStatus: 'none',
-      lastInspection: '2024-01-21',
-      notes: '6-month warranty on maintenance work'
-    }
-  ];
+  // Fetch warranties data
+  const { data: warranties, loading, error, refetch } = useAsync(
+    () => warrantyService.getAll(),
+    []
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -144,10 +69,10 @@ const Warranties = () => {
     return diffDays;
   };
 
-  const filteredWarranties = warranties.filter(warranty => {
-    const matchesSearch = warranty.jobNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         warranty.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         warranty.motorId.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredWarranties = (warranties || []).filter(warranty => {
+    const matchesSearch = warranty.job_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         warranty.company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         warranty.motor_motor_id?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || warranty.status === statusFilter;
     
@@ -155,17 +80,66 @@ const Warranties = () => {
   });
 
   // Calculate summary metrics
-  const activeWarranties = warranties.filter(w => w.status === 'active').length;
-  const expiringSoon = warranties.filter(w => {
-    const daysRemaining = getDaysRemaining(w.warrantyEnd);
+  const activeWarranties = (warranties || []).filter(w => w.status === 'active').length;
+  const expiringSoon = (warranties || []).filter(w => {
+    const daysRemaining = getDaysRemaining(w.warranty_end);
     return daysRemaining <= 30 && daysRemaining > 0;
   }).length;
-  const claimsThisYear = warranties.filter(w => 
-    w.status === 'claimed' && new Date(w.warrantyStart).getFullYear() === new Date().getFullYear()
+  const claimsThisYear = (warranties || []).filter(w => 
+    w.status === 'claimed' && new Date(w.warranty_start).getFullYear() === new Date().getFullYear()
   ).length;
   const avgWarrantyPeriod = Math.round(
-    warranties.reduce((sum, w) => sum + w.warrantyPeriod, 0) / warranties.length
-  );
+    (warranties || []).reduce((sum, w) => sum + w.warranty_period, 0) / (warranties?.length || 1)
+  ) || 0;
+
+  const handleExtendWarranty = async (formData: FormData) => {
+    if (!selectedWarranty) return;
+    
+    setIsExtending(true);
+    try {
+      const extensionMonths = parseInt(formData.get('extension_months') as string);
+      const extensionReason = formData.get('extension_reason') as string;
+      const notes = formData.get('notes') as string;
+      
+      const currentEndDate = new Date(selectedWarranty.warranty_end);
+      const newEndDate = new Date(currentEndDate);
+      newEndDate.setMonth(newEndDate.getMonth() + extensionMonths);
+      
+      await warrantyService.update(selectedWarranty.id, {
+        warranty_end: newEndDate.toISOString().split('T')[0],
+        original_end_date: selectedWarranty.original_end_date || selectedWarranty.warranty_end,
+        extension_months: (selectedWarranty.extension_months || 0) + extensionMonths,
+        extension_reason,
+        notes: notes || selectedWarranty.notes,
+        status: 'extended' as const
+      });
+      
+      setShowExtendModal(false);
+      setSelectedWarranty(null);
+      refetch();
+    } catch (error) {
+      console.error('Error extending warranty:', error);
+      alert('Failed to extend warranty. Please try again.');
+    } finally {
+      setIsExtending(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-4 lg:p-6 flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 lg:p-6">
+        <ErrorMessage message={error} onRetry={refetch} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-6 pb-24 lg:pb-6">
@@ -263,7 +237,7 @@ const Warranties = () => {
       {/* Warranties List */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {filteredWarranties.map((warranty) => {
-          const daysRemaining = getDaysRemaining(warranty.warrantyEnd);
+          const daysRemaining = getDaysRemaining(warranty.warranty_end);
           const isExpiringSoon = daysRemaining <= 30 && daysRemaining > 0;
           const isExpired = daysRemaining <= 0 && warranty.status !== 'expired';
           
@@ -277,8 +251,8 @@ const Warranties = () => {
                       {getStatusIcon(warranty.status)}
                     </div>
                     <div>
-                      <h3 className="font-bold text-lg text-gray-900">{warranty.jobNumber}</h3>
-                      <p className="text-sm text-gray-600">{warranty.companyName}</p>
+                      <h3 className="font-bold text-lg text-gray-900">{warranty.job_number}</h3>
+                      <p className="text-sm text-gray-600">{warranty.company_name}</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -301,13 +275,13 @@ const Warranties = () => {
                   <div className="flex items-center space-x-2">
                     <Settings className="h-4 w-4 text-gray-400" />
                     <span className="text-sm text-gray-600">Motor:</span>
-                    <span className="font-medium text-gray-900">{warranty.motorId}</span>
+                    <span className="font-medium text-gray-900">{warranty.motor_motor_id}</span>
                   </div>
                   <div className="flex items-start space-x-2">
                     <Wrench className="h-4 w-4 text-gray-400 mt-0.5" />
                     <div className="flex-1">
                       <span className="text-sm text-gray-600">Work:</span>
-                      <p className="text-sm text-gray-900 mt-1">{warranty.workDescription}</p>
+                      <p className="text-sm text-gray-900 mt-1">{warranty.work_description}</p>
                     </div>
                   </div>
                 </div>
@@ -316,17 +290,17 @@ const Warranties = () => {
                 <div className="grid grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
                   <div>
                     <p className="text-xs text-gray-600 mb-1">Start Date</p>
-                    <p className="font-medium text-gray-900">{new Date(warranty.warrantyStart).toLocaleDateString()}</p>
+                    <p className="font-medium text-gray-900">{new Date(warranty.warranty_start).toLocaleDateString()}</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-600 mb-1">End Date</p>
                     <p className={`font-medium ${isExpired || warranty.status === 'expired' ? 'text-red-600' : 'text-gray-900'}`}>
-                      {new Date(warranty.warrantyEnd).toLocaleDateString()}
+                      {new Date(warranty.warranty_end).toLocaleDateString()}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-600 mb-1">Period</p>
-                    <p className="font-medium text-gray-900">{warranty.warrantyPeriod} months</p>
+                    <p className="font-medium text-gray-900">{warranty.warranty_period} months</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-600 mb-1">Days Remaining</p>
@@ -340,27 +314,27 @@ const Warranties = () => {
                 </div>
 
                 {/* Last Inspection */}
-                {warranty.lastInspection && (
+                {warranty.last_inspection && (
                   <div className="flex items-center space-x-2 mb-4">
                     <CheckCircle className="h-4 w-4 text-green-600" />
                     <span className="text-sm text-gray-600">Last Inspection:</span>
                     <span className="text-sm font-medium text-gray-900">
-                      {new Date(warranty.lastInspection).toLocaleDateString()}
+                      {new Date(warranty.last_inspection).toLocaleDateString()}
                     </span>
                   </div>
                 )}
 
                 {/* Claim Status */}
-                {warranty.claimStatus && warranty.claimStatus !== 'none' && (
+                {warranty.claim_status && warranty.claim_status !== 'none' && (
                   <div className="flex items-center space-x-2 mb-4">
                     <Wrench className="h-4 w-4 text-blue-600" />
                     <span className="text-sm text-gray-600">Claim Status:</span>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      warranty.claimStatus === 'approved' ? 'bg-green-100 text-green-800' :
-                      warranty.claimStatus === 'denied' ? 'bg-red-100 text-red-800' :
+                      warranty.claim_status === 'approved' ? 'bg-green-100 text-green-800' :
+                      warranty.claim_status === 'denied' ? 'bg-red-100 text-red-800' :
                       'bg-yellow-100 text-yellow-800'
                     }`}>
-                      {warranty.claimStatus.toUpperCase()}
+                      {warranty.claim_status.toUpperCase()}
                     </span>
                   </div>
                 )}
@@ -424,21 +398,25 @@ const Warranties = () => {
               <div className="mb-6">
                 <p className="text-sm text-gray-600 mb-2">Current warranty for:</p>
                 <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="font-medium text-gray-900">{selectedWarranty.jobNumber}</p>
-                  <p className="text-sm text-gray-600">{selectedWarranty.companyName}</p>
-                  <p className="text-sm text-gray-600">Motor: {selectedWarranty.motorId}</p>
+                  <p className="font-medium text-gray-900">{selectedWarranty.job_number}</p>
+                  <p className="text-sm text-gray-600">{selectedWarranty.company_name}</p>
+                  <p className="text-sm text-gray-600">Motor: {selectedWarranty.motor_motor_id}</p>
                   <p className="text-sm text-gray-600">
-                    Current End Date: {new Date(selectedWarranty.warrantyEnd).toLocaleDateString()}
+                    Current End Date: {new Date(selectedWarranty.warranty_end).toLocaleDateString()}
                   </p>
                 </div>
               </div>
 
-              <form className="space-y-4">
+              <form className="space-y-4" onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                handleExtendWarranty(formData);
+              }}>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Extension Period
                   </label>
-                  <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                  <select name="extension_months" required className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     <option value="3">3 months</option>
                     <option value="6">6 months</option>
                     <option value="12">12 months</option>
@@ -451,7 +429,7 @@ const Warranties = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Extension Reason
                   </label>
-                  <select className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                  <select name="extension_reason" required className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     <option value="">Select reason</option>
                     <option value="additional_work">Additional work performed</option>
                     <option value="customer_request">Customer request</option>
@@ -465,6 +443,7 @@ const Warranties = () => {
                     Notes
                   </label>
                   <textarea
+                    name="notes"
                     rows={3}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Additional notes about the warranty extension..."
@@ -473,7 +452,7 @@ const Warranties = () => {
 
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <p className="text-sm text-blue-800">
-                    <strong>New End Date:</strong> {new Date(new Date(selectedWarranty.warrantyEnd).getTime() + (6 * 30 * 24 * 60 * 60 * 1000)).toLocaleDateString()}
+                    <strong>New End Date:</strong> {new Date(new Date(selectedWarranty.warranty_end).getTime() + (6 * 30 * 24 * 60 * 60 * 1000)).toLocaleDateString()}
                   </p>
                 </div>
 
@@ -490,9 +469,10 @@ const Warranties = () => {
                   </button>
                   <button
                     type="submit"
+                    disabled={isExtending}
                     className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                   >
-                    Extend Warranty
+                    {isExtending ? 'Extending...' : 'Extend Warranty'}
                   </button>
                 </div>
               </form>
